@@ -221,39 +221,41 @@ def start_zeta_visualization(canvas, info_label, zero_label, listbox):
     center_y = height / 2
     scale = min(width, height) / 4  # Increased scale for better visibility
     
+    # Draw static grid once at start
+    zeta_canvas.delete("all")
+    
+    # Draw simplified grid background
+    grid_spacing = 60
+    
+    # Vertical lines
+    for x in range(0, int(width), grid_spacing):
+        zeta_canvas.create_line(x, 0, x, height, 
+                               fill="#003300", width=1, tags="static")
+    
+    # Horizontal lines
+    for y in range(0, int(height), grid_spacing):
+        zeta_canvas.create_line(0, y, width, y, 
+                               fill="#003300", width=1, tags="static")
+    
+    # Center axes (brighter)
+    zeta_canvas.create_line(center_x, 0, center_x, height, 
+                           fill="#005500", width=2, tags="static")
+    zeta_canvas.create_line(0, center_y, width, center_y, 
+                           fill="#005500", width=2, tags="static")
+    
+    # Center point
+    zeta_canvas.create_oval(center_x - 2, center_y - 2,
+                           center_x + 2, center_y + 2,
+                           fill="#00aa00", outline="", tags="static")
+    
     def animate_zeta():
         global zeta_animation_id, zeta_t, last_zero_found
         
         if not zeta_canvas or not zeta_canvas.winfo_exists():
             return
         
-        # Only clear canvas every 5 frames to reduce overhead (reduced from every 3)
-        if len(zeta_points) % 5 == 0:
-            zeta_canvas.delete("all")
-            
-            # Draw simplified grid background
-            grid_spacing = 60  # Increased from 40 (fewer lines)
-            
-            # Vertical lines
-            for x in range(0, int(width), grid_spacing):
-                zeta_canvas.create_line(x, 0, x, height, 
-                                       fill="#003300", width=1)
-            
-            # Horizontal lines
-            for y in range(0, int(height), grid_spacing):
-                zeta_canvas.create_line(0, y, width, y, 
-                                       fill="#003300", width=1)
-            
-            # Center axes (brighter)
-            zeta_canvas.create_line(center_x, 0, center_x, height, 
-                                   fill="#005500", width=2)
-            zeta_canvas.create_line(0, center_y, width, center_y, 
-                                   fill="#005500", width=2)
-            
-            # Center point
-            zeta_canvas.create_oval(center_x - 2, center_y - 2,
-                                   center_x + 2, center_y + 2,
-                                   fill="#00aa00", outline="")
+        # Only delete dynamic elements, keep grid
+        zeta_canvas.delete("dynamic")
         
         # Calculate zeta(0.5 + it) using accurate mpmath
         zeta_real, zeta_imag = zeta_accurate(0.5, zeta_t)
@@ -301,59 +303,47 @@ def start_zeta_visualization(canvas, info_label, zero_label, listbox):
         y = center_y - zeta_imag * scale
         
         zeta_points.append((x, y, zeta_t))
-        if len(zeta_points) > 50:  # Reduced from 80 to 50 points
+        if len(zeta_points) > 500:  # Keep more points for smoother trail
             zeta_points.pop(0)
         
-        # PULSE ANIMATION when near zero - simplified
+        # PULSE ANIMATION when near zero - single ring for performance
         if near_zero:
-            pulse_size = int(25 + 15 * math.sin(zeta_t * 10))  # Smaller pulse
-            for radius in range(pulse_size, 10, -8):  # Fewer rings (step of 8 instead of 5)
-                alpha = 1 - (pulse_size - radius) / pulse_size
-                green_val = int(255 * alpha)
-                pulse_color = f'#{green_val:02x}{green_val:02x}00'
-                zeta_canvas.create_oval(center_x - radius, center_y - radius,
-                                       center_x + radius, center_y + radius,
-                                       outline=pulse_color, width=2, fill="")
+            pulse_size = int(20 + 10 * math.sin(zeta_t * 10))
+            pulse_color = '#ffff00'
+            zeta_canvas.create_oval(center_x - pulse_size, center_y - pulse_size,
+                                   center_x + pulse_size, center_y + pulse_size,
+                                   outline=pulse_color, width=2, fill="", tags="dynamic")
         
-        # Draw trail - sparse, every 4th point for better performance
-        for i in range(4, len(zeta_points), 4):  # Changed from 2 to 4
-            prev = zeta_points[i - 4]
+        # Draw trail - every 2nd point for performance while maintaining smoothness
+        for i in range(2, len(zeta_points), 2):
+            prev = zeta_points[i - 2]
             curr = zeta_points[i]
             alpha = i / len(zeta_points)
             
             # Simple green fade from dark to bright
             green_value = int(255 * alpha)
             color = f'#00{green_value:02x}00'
-            line_width = 2
             
             zeta_canvas.create_line(prev[0], prev[1], curr[0], curr[1],
-                                   fill=color, width=line_width)
+                                   fill=color, width=1, tags="dynamic")
         
-        # Draw current point - simple green glow (brighter if near zero)
+        # Draw current point - simple single circle (brighter if near zero)
         if zeta_points:
             curr = zeta_points[-1]
             
             if near_zero:
-                # Bright yellow-green glow when near zero
-                zeta_canvas.create_oval(curr[0] - 10, curr[1] - 10,
-                                       curr[0] + 10, curr[1] + 10,
-                                       fill="#ffff00", outline="")
-                zeta_canvas.create_oval(curr[0] - 5, curr[1] - 5,
-                                       curr[0] + 5, curr[1] + 5,
-                                       fill="#ffffff", outline="")
-            else:
-                # Normal green glow
+                # Bright yellow when near zero
                 zeta_canvas.create_oval(curr[0] - 6, curr[1] - 6,
                                        curr[0] + 6, curr[1] + 6,
-                                       fill="#00aa00", outline="")
-                
-                # Bright core point
-                zeta_canvas.create_oval(curr[0] - 3, curr[1] - 3,
-                                       curr[0] + 3, curr[1] + 3,
-                                       fill="#00FF00", outline="")
+                                       fill="#ffff00", outline="", tags="dynamic")
+            else:
+                # Bright green normally
+                zeta_canvas.create_oval(curr[0] - 4, curr[1] - 4,
+                                       curr[0] + 4, curr[1] + 4,
+                                       fill="#00FF00", outline="", tags="dynamic")
         
-        zeta_t += 0.2  # Increment
-        zeta_animation_id = root.after(100, animate_zeta)  # 10fps for smooth performance
+        zeta_t += 0.02  # Much finer increment for smooth, accurate visualization
+        zeta_animation_id = root.after(33, animate_zeta)  # 30fps for smooth performance
     
     animate_zeta()
 
@@ -601,4 +591,4 @@ def keep_on_top():
 
 keep_on_top()
 
-root.mainloop() 
+root.mainloop()
