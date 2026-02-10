@@ -221,6 +221,10 @@ def start_zeta_visualization(canvas, info_label, zero_label, listbox):
     center_y = height / 2
     scale = min(width, height) / 4  # Increased scale for better visibility
     
+    # Track magnitudes to find local minima
+    prev_magnitude = None
+    prev_prev_magnitude = None
+    
     # Draw static grid once at start
     zeta_canvas.delete("all")
     
@@ -250,6 +254,7 @@ def start_zeta_visualization(canvas, info_label, zero_label, listbox):
     
     def animate_zeta():
         global zeta_animation_id, zeta_t, last_zero_found
+        nonlocal prev_magnitude, prev_prev_magnitude
         
         if not zeta_canvas or not zeta_canvas.winfo_exists():
             return
@@ -262,8 +267,17 @@ def start_zeta_visualization(canvas, info_label, zero_label, listbox):
         
         # Check if near zero (within threshold)
         magnitude = math.sqrt(zeta_real**2 + zeta_imag**2)
-        near_zero = magnitude < 0.3  # Threshold for "close to zero"
-        is_zero = magnitude < 0.05   # Threshold for "at zero" - tighter with accurate calc
+        near_zero = magnitude < 0.3  # Threshold for visual "close to zero"
+        
+        # Detect actual zero crossing using local minimum
+        # A zero is at a local minimum where prev_prev > prev < current
+        is_local_minimum = False
+        if prev_magnitude is not None and prev_prev_magnitude is not None:
+            # Check if previous point was a local minimum
+            if prev_prev_magnitude > prev_magnitude < magnitude:
+                # And the minimum is very small (actual zero)
+                if prev_magnitude < 0.01:  # Much tighter threshold
+                    is_local_minimum = True
         
         # Update info label
         if zeta_info_label and zeta_info_label.winfo_exists():
@@ -278,18 +292,20 @@ def start_zeta_visualization(canvas, info_label, zero_label, listbox):
                     fg="#00FF00"
                 )
         
-        # Check for non-trivial zero
-        if is_zero and (last_zero_found is None or abs(zeta_t - last_zero_found) > 2):
-            last_zero_found = zeta_t
-            add_zero_to_list(zeta_t, magnitude)
+        # Check for non-trivial zero at local minimum
+        if is_local_minimum and (last_zero_found is None or abs(zeta_t - 0.02 - last_zero_found) > 2):
+            # Register the zero at the previous t value (where the minimum was)
+            zero_t = zeta_t - 0.02
+            last_zero_found = zero_t
+            add_zero_to_list(zero_t, prev_magnitude)
             
             if zeta_zero_label and zeta_zero_label.winfo_exists():
                 zeta_zero_label.config(
-                    text=f"🎯 ZERO #{len(zeros_found)} FOUND at t ≈ {zeta_t:.6f} 🎯",
+                    text=f"🎯 ZERO #{len(zeros_found)} FOUND at t ≈ {zero_t:.6f} 🎯",
                     fg="#ffffff",
                     bg="#004d00"
                 )
-        elif not is_zero and zeta_zero_label and zeta_zero_label.winfo_exists():
+        elif not is_local_minimum and zeta_zero_label and zeta_zero_label.winfo_exists():
             # Fade out the zero message
             if last_zero_found is not None and abs(zeta_t - last_zero_found) > 1:
                 zeta_zero_label.config(
@@ -341,6 +357,10 @@ def start_zeta_visualization(canvas, info_label, zero_label, listbox):
                 zeta_canvas.create_oval(curr[0] - 4, curr[1] - 4,
                                        curr[0] + 4, curr[1] + 4,
                                        fill="#00FF00", outline="", tags="dynamic")
+        
+        # Update magnitude history for next iteration
+        prev_prev_magnitude = prev_magnitude
+        prev_magnitude = magnitude
         
         zeta_t += 0.02  # Much finer increment for smooth, accurate visualization
         zeta_animation_id = root.after(33, animate_zeta)  # 30fps for smooth performance
