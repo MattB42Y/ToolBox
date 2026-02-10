@@ -9,7 +9,10 @@ import threading
 import time
 import random
 import math
-import cmath
+from mpmath import mp, zeta
+
+# Set precision for mpmath calculations
+mp.dps = 15  # 15 decimal places of precision
 
 # Config for "stay closed"
 CONFIG_FILE = 'toolbox_config.ini'
@@ -78,6 +81,15 @@ zeta_canvas = None
 zeta_points = []
 zeta_t = 0
 zeta_animation_id = None
+zeta_info_label = None
+zeta_zero_label = None
+zeros_listbox = None
+zeros_found = []  # List to store all zeros found
+last_zero_found = None
+
+# Known first few non-trivial zeros for reference
+KNOWN_ZEROS = [14.134725, 21.022040, 25.010858, 30.424876, 32.935062, 
+               37.586178, 40.918719, 43.327073, 48.005151, 49.773832]
 
 matrix_chars = list("ｦｱｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜ0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
@@ -91,12 +103,12 @@ def start_matrix_rain():
 
     drops.clear()
     width = root.winfo_width()
-    for _ in range(width // 20 + 1):
+    for _ in range(width // 40 + 1):  # Reduced from //20 to //40 (half as many drops)
         x = random.randint(0, width)
         y = random.randint(-200, -50)
-        speed = random.uniform(6, 18)
-        trail = random.randint(8, 20)
-        chars = [random.choice(matrix_chars) for _ in range(trail + 5)]
+        speed = random.uniform(8, 20)  # Faster drops
+        trail = random.randint(5, 12)  # Reduced from 8-20 to 5-12
+        chars = [random.choice(matrix_chars) for _ in range(trail + 3)]  # Reduced from +5 to +3
         drops.append([x, y, speed, trail, chars])
 
     def animate():
@@ -131,7 +143,7 @@ def start_matrix_rain():
                 drop[0] = random.randint(0, width)
                 drop[4] = [random.choice(matrix_chars) for _ in range(trail + 5)]
 
-        animation_id = root.after(50, animate)
+        animation_id = root.after(80, animate)  # Reduced frame rate from 50ms to 80ms (~12.5fps)
 
     animate()
 
@@ -145,66 +157,82 @@ def stop_matrix_rain():
         matrix_canvas = None
     drops.clear()
 
-# ─── Zeta Function Visualization ───────────────────────────────
-def zeta_approx(s_real, s_imag, max_terms=50):
-    """Approximate Riemann zeta function"""
-    real_sum = 0
-    imag_sum = 0
-    
-    for n in range(1, max_terms + 1):
-        n_pow_s = n ** (-s_real)
-        angle = -s_imag * math.log(n)
-        real_sum += n_pow_s * math.cos(angle)
-        imag_sum += n_pow_s * math.sin(angle)
-    
-    return real_sum, imag_sum
+# ─── Accurate Zeta Function using mpmath ───────────────────────
+def zeta_accurate(s_real, s_imag):
+    """Calculate Riemann zeta function using mpmath library (high precision)"""
+    try:
+        s = mp.mpc(s_real, s_imag)  # Create complex number
+        result = zeta(s)
+        return float(result.real), float(result.imag)
+    except:
+        return 0, 0
 
-def hsl_to_rgb(h, s, l):
-    """Convert HSL to RGB"""
-    c = (1 - abs(2 * l - 1)) * s
-    x = c * (1 - abs((h / 60) % 2 - 1))
-    m = l - c / 2
+def add_zero_to_list(t_value, magnitude, is_verified=False):
+    """Add a zero to the listbox"""
+    global zeros_found, zeros_listbox
     
-    if h < 60:
-        r, g, b = c, x, 0
-    elif h < 120:
-        r, g, b = x, c, 0
-    elif h < 180:
-        r, g, b = 0, c, x
-    elif h < 240:
-        r, g, b = 0, x, c
-    elif h < 300:
-        r, g, b = x, 0, c
-    else:
-        r, g, b = c, 0, x
+    # Check if this zero is close to a known zero
+    verification = ""
+    for known in KNOWN_ZEROS:
+        if abs(t_value - known) < 0.01:
+            verification = " ✓ VERIFIED"
+            is_verified = True
+            break
     
-    return int((r + m) * 255), int((g + m) * 255), int((b + m) * 255)
+    zero_info = {
+        't': t_value,
+        'magnitude': magnitude,
+        'count': len(zeros_found) + 1,
+        'verified': is_verified
+    }
+    zeros_found.append(zero_info)
+    
+    if zeros_listbox and zeros_listbox.winfo_exists():
+        display_text = f"#{zero_info['count']}: t ≈ {t_value:.6f}  (|ζ| = {magnitude:.8f}){verification}"
+        zeros_listbox.insert(tk.END, display_text)
+        
+        # Color verified zeros differently
+        if is_verified:
+            zeros_listbox.itemconfig(tk.END, fg="#00FFFF")
+        
+        zeros_listbox.see(tk.END)  # Auto-scroll to latest
 
-def start_zeta_visualization(canvas):
-    global zeta_canvas, zeta_animation_id, zeta_points, zeta_t
+def clear_zeros_list():
+    """Clear all zeros from the list"""
+    global zeros_found, zeros_listbox
+    zeros_found.clear()
+    if zeros_listbox and zeros_listbox.winfo_exists():
+        zeros_listbox.delete(0, tk.END)
+
+def start_zeta_visualization(canvas, info_label, zero_label, listbox):
+    global zeta_canvas, zeta_animation_id, zeta_points, zeta_t, zeta_info_label, zeta_zero_label, zeros_listbox, last_zero_found
     
     zeta_canvas = canvas
+    zeta_info_label = info_label
+    zeta_zero_label = zero_label
+    zeros_listbox = listbox
     zeta_points.clear()
     zeta_t = 0
+    last_zero_found = None
     
     width = canvas.winfo_reqwidth() or 300
     height = canvas.winfo_reqheight() or 300
     center_x = width / 2
     center_y = height / 2
-    scale = min(width, height) / 8
+    scale = min(width, height) / 4  # Increased scale for better visibility
     
     def animate_zeta():
-        global zeta_animation_id, zeta_t
+        global zeta_animation_id, zeta_t, last_zero_found
         
         if not zeta_canvas or not zeta_canvas.winfo_exists():
             return
         
-        # Only clear canvas every few frames to reduce overhead
-        if len(zeta_points) % 3 == 0:
+        # Only clear canvas every 5 frames to reduce overhead (reduced from every 3)
+        if len(zeta_points) % 5 == 0:
             zeta_canvas.delete("all")
             
-            # Draw grid background
-            grid_spacing = 40
+            # Draw simplified grid background
+            grid_spacing = 60  # Increased from 40 (fewer lines)
             
             # Vertical lines
             for x in range(0, int(width), grid_spacing):
@@ -227,35 +255,69 @@ def start_zeta_visualization(canvas):
                                    center_x + 2, center_y + 2,
                                    fill="#00aa00", outline="")
         
-        # Calculate zeta(0.5 + it) - even fewer terms
-        zeta_real, zeta_imag = zeta_approx(0.5, zeta_t, 25)
+        # Calculate zeta(0.5 + it) using accurate mpmath
+        zeta_real, zeta_imag = zeta_accurate(0.5, zeta_t)
         
         # Check if near zero (within threshold)
         magnitude = math.sqrt(zeta_real**2 + zeta_imag**2)
-        near_zero = magnitude < 0.5  # Threshold for "close to zero"
+        near_zero = magnitude < 0.3  # Threshold for "close to zero"
+        is_zero = magnitude < 0.05   # Threshold for "at zero" - tighter with accurate calc
+        
+        # Update info label
+        if zeta_info_label and zeta_info_label.winfo_exists():
+            if near_zero:
+                zeta_info_label.config(
+                    text="⚡ PULSING - Approaching Zero! ⚡",
+                    fg="#ffff00"
+                )
+            else:
+                zeta_info_label.config(
+                    text=f"t = {zeta_t:.4f}  |ζ(0.5+it)| = {magnitude:.6f}",
+                    fg="#00FF00"
+                )
+        
+        # Check for non-trivial zero
+        if is_zero and (last_zero_found is None or abs(zeta_t - last_zero_found) > 2):
+            last_zero_found = zeta_t
+            add_zero_to_list(zeta_t, magnitude)
+            
+            if zeta_zero_label and zeta_zero_label.winfo_exists():
+                zeta_zero_label.config(
+                    text=f"🎯 ZERO #{len(zeros_found)} FOUND at t ≈ {zeta_t:.6f} 🎯",
+                    fg="#ffffff",
+                    bg="#004d00"
+                )
+        elif not is_zero and zeta_zero_label and zeta_zero_label.winfo_exists():
+            # Fade out the zero message
+            if last_zero_found is not None and abs(zeta_t - last_zero_found) > 1:
+                zeta_zero_label.config(
+                    text=f"Total zeros found: {len(zeros_found)} | Last at t ≈ {last_zero_found:.6f}",
+                    fg="#00aa00",
+                    bg="#050510"
+                )
         
         # Map to screen
         x = center_x + zeta_real * scale
         y = center_y - zeta_imag * scale
         
         zeta_points.append((x, y, zeta_t))
-        if len(zeta_points) > 60:  # Reduced from 100
+        if len(zeta_points) > 50:  # Reduced from 80 to 50 points
             zeta_points.pop(0)
         
-        # PULSE ANIMATION when near zero
+        # PULSE ANIMATION when near zero - simplified
         if near_zero:
-            pulse_size = int(30 + 20 * math.sin(zeta_t * 10))  # Pulsing radius
-            for radius in range(pulse_size, 10, -5):
+            pulse_size = int(25 + 15 * math.sin(zeta_t * 10))  # Smaller pulse
+            for radius in range(pulse_size, 10, -8):  # Fewer rings (step of 8 instead of 5)
                 alpha = 1 - (pulse_size - radius) / pulse_size
                 green_val = int(255 * alpha)
-                pulse_color = f'#{green_val:02x}{green_val:02x}00'  # Yellow-green pulse
+                pulse_color = f'#{green_val:02x}{green_val:02x}00'
                 zeta_canvas.create_oval(center_x - radius, center_y - radius,
                                        center_x + radius, center_y + radius,
                                        outline=pulse_color, width=2, fill="")
         
-        # Draw trail - even more sparse, every 3rd point
-        for i in range(3, len(zeta_points), 3):
-            prev = zeta_points[i - 3]
+        # Draw trail - sparse, every 4th point for better performance
+        for i in range(4, len(zeta_points), 4):  # Changed from 2 to 4
+            prev = zeta_points[i - 4]
             curr = zeta_points[i]
             alpha = i / len(zeta_points)
             
@@ -290,17 +352,20 @@ def start_zeta_visualization(canvas):
                                        curr[0] + 3, curr[1] + 3,
                                        fill="#00FF00", outline="")
         
-        zeta_t += 0.2  # Even faster increment
-        zeta_animation_id = root.after(100, animate_zeta)  # Even slower framerate (100ms = 10fps)
+        zeta_t += 0.2  # Increment
+        zeta_animation_id = root.after(100, animate_zeta)  # 10fps for smooth performance
     
     animate_zeta()
 
 def stop_zeta_visualization():
-    global zeta_animation_id, zeta_canvas
+    global zeta_animation_id, zeta_canvas, zeta_info_label, zeta_zero_label, zeros_listbox
     if zeta_animation_id:
         root.after_cancel(zeta_animation_id)
         zeta_animation_id = None
     zeta_canvas = None
+    zeta_info_label = None
+    zeta_zero_label = None
+    zeros_listbox = None
     zeta_points.clear()
 
 # ─── Notes Auto-Save ───────────────────────────────────────────
@@ -358,7 +423,7 @@ def toggle_tools():
             notes_text = None
     else:
         tools_visible.set(True)
-        root.geometry("400x480")
+        root.geometry("400x600")  # Made taller for the list
         
         start_matrix_rain()
         
@@ -381,7 +446,7 @@ def toggle_tools():
                  foreground=[('selected', '#00FF00')])
         
         notebook = ttk.Notebook(tools_frame, style='Matrix.TNotebook')
-        notebook.pack(fill='both', expand=True, padx=5, pady=5)
+        notebook.pack(fill='both', expand=True, padx=5, pady=(5, 0))
         
         # ═══ TAB 1: Search & Notes ═══
         tab1 = tk.Frame(notebook, bg="#000800")
@@ -421,19 +486,69 @@ def toggle_tools():
         tab2 = tk.Frame(notebook, bg="#050510")
         notebook.add(tab2, text="ζ(s)")
         
-        tk.Label(tab2, text="Riemann Zeta Function ζ(0.5 + it)", 
+        tk.Label(tab2, text="Riemann Zeta Function ζ(0.5 + it) [mpmath]", 
                 bg="#050510", fg="#00FF00",
-                font=("Consolas", 11, "bold")).pack(pady=10)
+                font=("Consolas", 10, "bold")).pack(pady=5)
         
+        # Info label for current state
+        info_label = tk.Label(tab2, text="Initializing...", 
+                             bg="#050510", fg="#00FF00",
+                             font=("Consolas", 9))
+        info_label.pack(pady=2)
+        
+        # Zero detection label
+        zero_label = tk.Label(tab2, text="Searching for zeros...", 
+                             bg="#050510", fg="#00aa00",
+                             font=("Consolas", 9, "bold"))
+        zero_label.pack(pady=2)
+        
+        # Canvas for visualization
         zeta_display = tk.Canvas(tab2, bg="#050510", highlightthickness=0,
-                                width=360, height=320)
-        zeta_display.pack(fill='both', expand=True, padx=10, pady=10)
+                                width=360, height=200)
+        zeta_display.pack(fill='both', expand=False, padx=10, pady=5)
+        
+        # Zeros list section
+        list_frame = tk.Frame(tab2, bg="#050510")
+        list_frame.pack(fill='both', expand=True, padx=10, pady=5)
+        
+        list_header = tk.Frame(list_frame, bg="#050510")
+        list_header.pack(fill='x', pady=(0, 5))
+        
+        tk.Label(list_header, text="Non-Trivial Zeros Found:", 
+                bg="#050510", fg="#00FF00",
+                font=("Consolas", 10, "bold")).pack(side="left")
+        
+        tk.Button(list_header, text="Clear List", command=clear_zeros_list,
+                 bg="#4d0000", fg="#FF4444", activebackground="#660000",
+                 font=("Consolas", 8, "bold"), relief="raised").pack(side="right")
+        
+        # Info about verification
+        tk.Label(list_header, text="(✓ = matches known zero)", 
+                bg="#050510", fg="#00FFFF",
+                font=("Consolas", 8)).pack(side="right", padx=10)
+        
+        # Scrollable listbox for zeros
+        list_container = tk.Frame(list_frame, bg="#001a00")
+        list_container.pack(fill='both', expand=True)
+        
+        scrollbar = tk.Scrollbar(list_container, orient="vertical")
+        scrollbar.pack(side="right", fill="y")
+        
+        zeros_list = tk.Listbox(list_container, 
+                               bg="#001a00", fg="#00FF88",
+                               font=("Consolas", 9),
+                               selectbackground="#004d00",
+                               selectforeground="#00FF00",
+                               yscrollcommand=scrollbar.set,
+                               relief="flat", borderwidth=1)
+        zeros_list.pack(side="left", fill='both', expand=True)
+        scrollbar.config(command=zeros_list.yview)
         
         # Start visualization when tab is visible
         def on_tab_change(event):
             selected_tab = event.widget.index("current")
             if selected_tab == 1:  # Zeta tab
-                start_zeta_visualization(zeta_display)
+                start_zeta_visualization(zeta_display, info_label, zero_label, zeros_list)
             else:
                 stop_zeta_visualization()
         
@@ -441,13 +556,14 @@ def toggle_tools():
         
         # Bottom buttons
         btn_frame = tk.Frame(tools_frame, bg="#000800")
-        btn_frame.pack(pady=15)
+        btn_frame.pack(side="bottom", fill="x", pady=8, padx=10)
+        
         tk.Button(btn_frame, text="Close Tools", command=toggle_tools,
                   bg="#004d00", fg="#00FF00", activebackground="#006600",
-                  font=("Consolas", 9, "bold")).pack(side="left", padx=10)
+                  font=("Consolas", 9, "bold"), relief="raised").pack(side="left", padx=5)
         tk.Button(btn_frame, text="Stay Closed Forever", command=quit_permanently,
                   bg="#4d0000", fg="#FF4444", activebackground="#660000",
-                  font=("Consolas", 9, "bold")).pack(side="right", padx=10)
+                  font=("Consolas", 9, "bold"), relief="raised").pack(side="right", padx=5)
         
         if matrix_canvas:
             matrix_canvas.lower()
@@ -485,4 +601,4 @@ def keep_on_top():
 
 keep_on_top()
 
-root.mainloop()
+root.mainloop() 
